@@ -213,6 +213,37 @@ class Parser(object):
                 return Value.failure(end.index, 'ends with {}'.format(end.expected))
         return ends_with_parser
 
+    def not_followed_by(self, other):
+        @Parser
+        def not_followed_by_parser(text, index):
+            value = None
+            res = self(text, index)
+            if not res.status:
+                return res
+            else:
+                index, value = res.index, Value.success(res.index, res.value)
+            res = other(text, index)
+            if res.status:
+                return Value.failure(res.index, 'to not end with {}'.format(res.value))
+            return value
+        return not_followed_by_parser
+
+    def only(self, *others):
+        @Parser
+        def only_parser(text, index):
+            value = None
+            res = self(text, index)
+            if not res.status:
+                return res
+            else:
+                value = Value.success(res.index, res.value)
+            for other in others:
+                res = other(text, index)
+                if res.status:
+                    return Value.failure(index, "only: unexpected parser success")
+            return value
+        return only_parser
+
     def parsecmap(self, fn):
         '''Returns a parser that transforms the produced value of parser with `fn`.'''
         return self.bind(lambda res: Parser(lambda _, index: Value.success(index, fn(res))))
@@ -246,6 +277,12 @@ class Parser(object):
     def __xor__(self, other):
         '''Implements the `(^)` operator, means `try_choice`.'''
         return self.try_choice(other)
+
+    def __sub__(self, other):
+        return self.not_followed_by(other)
+
+    def __mod__(self, other):
+        return self.only(other)
 
     def __add__(self, other):
         '''Implements the `(+)` operator, means `joint`.'''
@@ -315,12 +352,16 @@ def skip(pa, pb):
     Implements the operator of `(<<)`.'''
     return pa.skip(pb)
 
+def only(p, *others):
+    return p.only(*others)
 
 def ends_with(pa, pb):
     '''Ends with a specified parser, and at the end parser hasn't consumed any input.
     Implements the operator of `(<)`.'''
     return pa.ends_with(pb)
 
+def not_followed_by(pa, pb):
+    return pa.not_followed_by(pb)
 
 def parsecmap(p, fn):
     '''Returns a parser that transforms the produced value of parser with `fn`.'''
@@ -381,7 +422,7 @@ def generate(fn):
 ##########################################################################
 
 
-def times(p, mint, maxt=None):
+def times(p, mint, maxt=None, until=None):
     '''Repeat a parser between `mint` and `maxt` times. DO AS MUCH MATCH AS IT CAN.
     Return a list of values.'''
     maxt = maxt if maxt else mint
@@ -390,6 +431,11 @@ def times(p, mint, maxt=None):
     def times_parser(text, index):
         cnt, values, res = 0, Value.success(index, []), None
         while cnt < maxt:
+            if until:
+                res = until(text, index)
+                if res.status:
+                    break
+
             res = p(text, index)
             if res.status:
                 values = values.aggregate(
@@ -438,6 +484,11 @@ def many1(p):
     Return a list of values.'''
     return times(p, 1, float('inf'))
 
+def many_until(p, until):
+    return times(p, 0, float('inf'), until=until)
+
+def between(openp, closep, p):
+    return openp >> p << closep
 
 def separated(p, sep, mint, maxt=None, end=None):
     '''Repeat a parser `p` separated by `s` between `mint` and `maxt` times.
@@ -527,6 +578,9 @@ def sepEndBy1(p, sep):
 ##########################################################################
 
 
+def concat(p):
+    return p.parsecmap(lambda x: ''.join(x))
+
 def one_of(s):
     '''Parser a char from specified string.'''
     @Parser
@@ -564,7 +618,6 @@ def spaces():
     '''Parser zero or more whitespace characters.'''
     return many(space())
 
-
 def letter():
     '''Parse a letter in alphabet.'''
     @Parser
@@ -574,7 +627,6 @@ def letter():
         else:
             return Value.failure(index, 'a letter')
     return letter_parser
-
 
 def digit():
     '''Parse a digit character.'''
@@ -586,6 +638,15 @@ def digit():
             return Value.failure(index, 'a digit')
     return digit_parser
 
+def anychar():
+    '''Parse any character'''
+    @Parser
+    def anychar_parser(text, index=0):
+        if index < len(text):
+            return Value.success(index + 1, text[index])
+        else:
+            return Value.failure(index, 'a non EOF character')
+    return anychar_parser
 
 def eof():
     '''Parser EOF flag of a string.'''
