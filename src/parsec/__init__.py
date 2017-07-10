@@ -19,11 +19,12 @@ from collections import namedtuple
 class ParseError(RuntimeError):
     '''Parser error.'''
 
-    def __init__(self, expected, text, index):
+    def __init__(self, expected, text, index, custom=False):
         super(ParseError, self).__init__() # compatible with Python 2.
         self.expected = expected
         self.text = text
         self.index = index
+        self.custom = custom
 
     @staticmethod
     def loc_info(text, index):
@@ -42,7 +43,10 @@ class ParseError(RuntimeError):
             return '<out of bounds index {!r}>'.format(self.index)
 
     def __str__(self):
-        return 'expected {} at {}'.format(self.expected, self.loc())
+        if not self.custom:
+            return 'expected {} at {}'.format(self.expected, self.loc())
+        else:
+            return 'at {}, {}'.format(self.loc(), self.expected)
 
 ##########################################################################
 # Definition the Value model of parsec.py.
@@ -120,7 +124,7 @@ class Parser(object):
         If failed, raise a ParseError. '''
         if not isinstance(text, str):
             raise TypeError(
-                'Can only parsing string but got {!r}'.format(text))
+                'Can only parse a string but got {!r}'.format(text))
         res = self(text, 0)
         if res.status:
             return (res.value, text[res.index:])
@@ -281,8 +285,11 @@ class Parser(object):
     def __sub__(self, other):
         return self.not_followed_by(other)
 
-    def __mod__(self, other):
+    def __pow__(self, other):
         return self.only(other)
+
+    def __mod__(self, desc):
+        return self.desc(desc)
 
     def __add__(self, other):
         '''Implements the `(+)` operator, means `joint`.'''
@@ -409,6 +416,10 @@ def generate(fn):
                 if not res.status:  # this parser failed.
                     return res
                 value, index = res.value, res.index  # iterate
+        except ParseError as pe:
+            if pe.custom:
+                pe.text, pe.index = text, index
+            raise pe            
         except StopIteration as stop:
             endval = stop.value
             if isinstance(endval, Parser):
@@ -416,6 +427,14 @@ def generate(fn):
             else:
                 return Value.success(index, endval)
     return generated.desc(fn.__name__)
+
+def produce(result):
+    si = StopIteration()
+    si.value = result
+    raise si
+
+def raise_error(desc):
+    raise ParseError(desc, "", 0, custom=True)
 
 ##########################################################################
 # Text.Parsec.Combinator
